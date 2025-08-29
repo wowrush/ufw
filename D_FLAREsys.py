@@ -55,9 +55,6 @@ def step1_process_logs(raw_log_path, step1_out_path, unique_out_json, batch_id, 
         writer.writeheader()
         pbar = tqdm(reader, total=total_lines-1, desc=f"{Fore.CYAN}清洗進度", disable=not show_progress)
         for i, row in enumerate(pbar):
-            if i < 2:
-                print("[STEP1] DEBUG row keys:", list(row.keys()))
-                print("[STEP1] DEBUG row content:", row)
             record = {col: row.get(col, "") for col in STANDARD_COLUMNS if col != "batch_id" and col != "raw_log"}
             record["batch_id"] = batch_id
             record["raw_log"] = json.dumps(row, ensure_ascii=False)
@@ -121,12 +118,6 @@ def step2_preprocess_data(step1_out_path, step2_out_path, unique_json, show_prog
         else:
             chunk["is_attack"] = 0
 
-        # ====== DEBUG 用，確認判斷是否正確 ======
-        print("=== STEP2 DEBUG (前10筆) ===")
-        print(chunk[["Severity", "is_attack"]].head(10))
-        print("Severity value_counts:\n", chunk["Severity"].value_counts())
-        print("is_attack value_counts:\n", chunk["is_attack"].value_counts())
-
         # 數值欄位
         for col in numeric_cols:
             if col in chunk.columns:
@@ -181,16 +172,6 @@ def dflare_binary_predict(input_csv, binary_model_path, output_csv, output_pie, 
     # 只保留模型需要的欄位，不多不少，不會有 batch_id
     df_model = df.reindex(columns=model_feat_cols, fill_value=-1)
     df_model = df_model.fillna(-1).astype(int)
-    # 建議插入在 df_model 建立後（或前後都可以）
-    print("\n=== [DEBUG] Model expects columns: ===")
-    print(model_feat_cols)
-    print("=== [DEBUG] Input data columns: ===")
-    print(df.columns.tolist())
-    print("=== [DEBUG] df_model shape: ===")
-    print(df_model.shape)
-    print("=== [DEBUG] df_model head: ===")
-    print(df_model.head())
-    #記得回來刪掉我
 
     tqdm.write(f"{Fore.CYAN}{Style.BRIGHT}STEP3-1：二元模型預測與圖表產生中...")
     df['is_attack'] = bin_model.predict(df_model)
@@ -289,15 +270,6 @@ def dflare_multiclass_predict(df_attack, multiclass_model_path, output_csv, outp
         raise RuntimeError("多元模型未存特徵名稱，請明確指定 feat_cols。")
     df_model = df_attack.reindex(columns=model_feat_cols, fill_value=-1)
     df_model = df_model.fillna(-1).astype(int)
-    print("\n=== [DEBUG-MULTI] Model expects columns: ===")
-    print(model_feat_cols)
-    print("=== [DEBUG-MULTI] Input data columns: ===")
-    print(df_attack.columns.tolist())
-    print("=== [DEBUG-MULTI] df_model shape: ===")
-    print(df_model.shape)
-    print("=== [DEBUG-MULTI] df_model head: ===")
-    print(df_model.head())
-    #記得回來刪掉我
 
     tqdm.write(f"{Fore.CYAN}{Style.BRIGHT}STEP3-2：多元模型分級與圖表產生中...")
     df_attack['Severity'] = mul_model.predict(df_model)
@@ -397,8 +369,7 @@ def dflare_sys_full_pipeline(
     )
 
     # ====== [5] 多元模型（僅攻擊流量預測） ======
-    print("=== PIPELINE DEBUG (is_attack 分佈) ===")
-    print(df_bin["is_attack"].value_counts())
+    df_bin["is_attack"] = pd.to_numeric(df_bin["is_attack"], errors="coerce").fillna(0).astype(int)
     df_attack = df_bin[df_bin['is_attack'] == 1].copy()
     if df_attack.empty:
         print(f"{Fore.YELLOW}{Style.BRIGHT}本批資料無攻擊流量（is_attack=1），跳過多元分級。")
