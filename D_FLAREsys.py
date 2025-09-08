@@ -514,6 +514,63 @@ def _redraw_binary_charts_from_df(df: pd.DataFrame, output_pie: str, output_bar:
     plt.savefig(output_bar, bbox_inches='tight')
     plt.close()
 
+
+def _redraw_multiclass_charts_from_df(df: pd.DataFrame, output_pie: str, output_bar: str):
+    """把覆寫後的多元分級結果重新畫圖，確保圖表與 CSV 一致。"""
+    import matplotlib.pyplot as plt
+    from matplotlib.font_manager import FontProperties
+    from matplotlib.ticker import MaxNLocator, FuncFormatter
+
+    if os.name == "nt":
+        font_path = "C:/Windows/Fonts/msjh.ttc"
+    elif os.path.exists("/System/Library/Fonts/PingFang.ttc"):
+        font_path = "/System/Library/Fonts/PingFang.ttc"
+    else:
+        font_path = "/usr/share/fonts/truetype/arphic/uming.ttc"
+    font_name = FontProperties(fname=font_path).get_name()
+    plt.rcParams['font.family'] = font_name
+    plt.rcParams['axes.unicode_minus'] = False
+    plt.rcParams['figure.facecolor'] = "#fcfcfc"
+
+    severity_map = {1: '危險', 2: '高', 3: '中', 4: '低'}
+    show_levels = [1, 2, 3, 4]
+    sev_labels = [severity_map[i] for i in show_levels]
+    colors_sev = ["#d32f2f", "#f57c08", "#fbc02d", "#04ff11"]
+
+    if 'Severity' in df.columns:
+        df_attack = df[df['is_attack'] == 1].copy()
+        df_attack['Severity'] = pd.to_numeric(df_attack['Severity'], errors="coerce").fillna(0).astype(int)
+        sev_dist = df_attack['Severity'].value_counts().sort_index().reindex(show_levels, fill_value=0)
+    else:
+        sev_dist = pd.Series(0, index=show_levels)
+
+    vals = [int(sev_dist.loc[i]) for i in show_levels]
+
+    # 圓餅
+    draw_pie_with_side_legend(
+        values=vals,
+        labels=sev_labels,
+        colors=colors_sev,
+        output_path=output_pie,
+        title="Severity 分布（僅針對攻擊流量）",
+        decimals=2
+    )
+
+    # 長條（動態 Y 軸 + 千分位 + 置中數字）
+    plt.figure(figsize=(7, 5))
+    ax = plt.gca(); ax.yaxis.set_major_locator(MaxNLocator(integer=True))
+    y_top = dynamic_ylim_from_values(vals)
+    ax.set_ylim(0, y_top)
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x):,}"))
+    plt.bar(sev_labels, vals, color=colors_sev, edgecolor="#333", width=0.6)
+    for idx, v in enumerate(vals):
+        y_lab = min(v + y_top * 0.05, y_top * 0.98)
+        plt.text(idx, y_lab, f"{int(v):,}", ha='center', va='bottom', fontsize=13)
+    plt.xlabel('Severity 等級（4為最低，1為最高）', fontsize=15, labelpad=10)
+    plt.ylabel('數量（筆）', fontsize=15, labelpad=10)
+    plt.title('Severity 分布（僅針對攻擊流量）', fontsize=18, pad=20)
+    plt.tight_layout(); plt.savefig(output_bar, bbox_inches='tight'); plt.close()
+
 # ---------- 告警彙整 ----------
 def build_alerts(df: pd.DataFrame, out_json: str):
     df = _normalize_columns(df)
@@ -554,8 +611,10 @@ def save_all_results_and_redraw(
     binary_bar: str,
     overwrite: bool = False,
     dedupe: bool = False,
+    multi_pie: str = None,
+    multi_bar: str = None,
 ):
-    """將本批結果寫入 all_results.csv 並用累積資料重繪二元圖表。"""
+    """將本批結果寫入 all_results.csv 並用累積資料重繪二元/多元圖表。"""
     df_save = df_bin.copy()
     df_save["batch_id"] = batch_id
 
@@ -581,6 +640,8 @@ def save_all_results_and_redraw(
 
     df_all = pd.read_csv(all_results_path, encoding="utf-8")
     _redraw_binary_charts_from_df(df_all, binary_pie, binary_bar)
+    if multi_pie and multi_bar:
+        _redraw_multiclass_charts_from_df(df_all, multi_pie, multi_bar)
     return df_all
 
 # =============== STEP1 ===============
@@ -896,7 +957,7 @@ def dflare_multiclass_predict(df_attack, multiclass_model_path, output_csv, outp
         "severity_distribution": sev_dist.to_dict(),
         "count_all": int(df_attack.shape[0]),
         "message": "多元分級結果已產生"
-    }
+    }, df_attack
 
 # ========== PIPELINE ==========
 def dflare_sys_full_pipeline(
@@ -957,14 +1018,11 @@ def dflare_sys_full_pipeline(
     df_bin = force_mark_acl_deny_anywhere(df_bin)  # 最後保險
     df_bin["is_attack"] = pd.to_numeric(df_bin["is_attack"], errors="coerce").fillna(0).astype(int)
 
-    # 寫回 & 告警彙整（圖表稍後根據累積資料重新繪製）
-    df_bin.to_csv(binary_csv, index=False, encoding="utf-8")
-    build_alerts(df_bin, alerts_json)
-
-
     df_attack = df_bin[df_bin['is_attack'] == 1].copy()
     if df_attack.empty:
         print(f"{Fore.YELLOW}{Style.BRIGHT}本批資料無攻擊流量（is_attack=1），跳過多元分級。")
+        df_bin.to_csv(binary_csv, index=False, encoding="utf-8")
+        build_alerts(df_bin, alerts_json)
         df_all = save_all_results_and_redraw(
             df_bin,
             batch_id,
@@ -973,6 +1031,8 @@ def dflare_sys_full_pipeline(
             binary_bar,
             overwrite_all_results,
             dedupe_all_results,
+            multi_pie,
+            multi_bar,
         )
         dist_all = df_all['is_attack'].value_counts().sort_index().reindex([0, 1], fill_value=0)
         bin_res["is_attack_distribution"] = dist_all.to_dict()
@@ -995,7 +1055,7 @@ def dflare_sys_full_pipeline(
         }
 
     # 有攻擊流量才進行多元分級
-    multi_res = dflare_multiclass_predict(
+    multi_res, df_attack = dflare_multiclass_predict(
         df_attack=df_attack,
         multiclass_model_path=multiclass_model_path,
         output_csv=multi_csv,
@@ -1005,6 +1065,9 @@ def dflare_sys_full_pipeline(
         show_progress=show_progress
     )
 
+    df_bin.loc[df_bin['is_attack'] == 1, 'Severity'] = df_attack['Severity'].values
+    df_bin.to_csv(binary_csv, index=False, encoding="utf-8")
+    build_alerts(df_bin, alerts_json)
 
     df_all = save_all_results_and_redraw(
         df_bin,
@@ -1014,6 +1077,8 @@ def dflare_sys_full_pipeline(
         binary_bar,
         overwrite_all_results,
         dedupe_all_results,
+        multi_pie,
+        multi_bar,
     )
     dist_all = df_all['is_attack'].value_counts().sort_index().reindex([0, 1], fill_value=0)
     bin_res["is_attack_distribution"] = dist_all.to_dict()
