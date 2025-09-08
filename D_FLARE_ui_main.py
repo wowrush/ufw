@@ -698,6 +698,7 @@ class VisualizerWidget(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
+
         # 綁定事件
         self.binary_bar_btn.clicked.connect(lambda: self.display_image("binary_bar.png"))
         self.binary_pie_btn.clicked.connect(lambda: self.display_image("binary_pie.png"))
@@ -723,26 +724,16 @@ class VisualizerWidget(QWidget):
             return
         path = os.path.join(folder, filename)
         if os.path.exists(path):
-            new_pixmap = QPixmap(path)
-            new_pixmap = new_pixmap.scaled(
+codex/allow-data-overlay-on-new-chart-1i37t9
+            pixmap = QPixmap(path)
+            pixmap = pixmap.scaled(
                 self.image_label.width(),
                 self.image_label.height(),
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
-
-            base_pixmap = self.image_label.pixmap()
-            if base_pixmap is None or base_pixmap.isNull():
-                base_pixmap = QPixmap(self.image_label.size())
-                base_pixmap.fill(Qt.transparent)
-
-            painter = QPainter(base_pixmap)
-            x = (base_pixmap.width() - new_pixmap.width()) // 2
-            y = (base_pixmap.height() - new_pixmap.height()) // 2
-            painter.drawPixmap(x, y, new_pixmap)
-            painter.end()
-
-            self.image_label.setPixmap(base_pixmap)
+ codex/allow-data-overlay-on-new-chart-1i37t9
+            self.image_label.setPixmap(pixmap)
             self.image_label.setText("")  # 清除預設文字
         else:
             self.image_label.setPixmap(QPixmap())
