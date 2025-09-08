@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QFormLayout, QSpinBox, QGridLayout,
     QListWidget, QListWidgetItem, QStackedWidget
 )
-from PyQt5.QtGui import QIcon, QColor, QPixmap, QFont
+from PyQt5.QtGui import QIcon, QColor, QPixmap, QFont, QPainter
 from PyQt5.QtCore import Qt, QTimer, QProcess, QFileSystemWatcher, pyqtSignal, QThread
 
 
@@ -724,6 +724,7 @@ class VisualizerWidget(QWidget):
             return
         path = os.path.join(folder, filename)
         if os.path.exists(path):
+codex/allow-data-overlay-on-new-chart-1i37t9
             pixmap = QPixmap(path)
             pixmap = pixmap.scaled(
                 self.image_label.width(),
@@ -731,6 +732,7 @@ class VisualizerWidget(QWidget):
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
+ codex/allow-data-overlay-on-new-chart-1i37t9
             self.image_label.setPixmap(pixmap)
             self.image_label.setText("")  # 清除預設文字
         else:
