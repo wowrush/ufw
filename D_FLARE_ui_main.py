@@ -473,14 +473,20 @@ class LogFetcherWidget(QWidget):
 
         if not self.socket_proc:
             return
-        encoding = locale.getpreferredencoding()  # 自動偵測系統預設編碼
         while self.socket_proc.canReadLine():
-            try:
-                line = self.socket_proc.readLine().data().decode("cp950", errors="replace").strip()
-                if line:
-                    self.log_output.append(line)
-            except Exception as e:
-                self.log_output.append(f"❌ 解碼失敗: {e}")
+            raw = bytes(self.socket_proc.readLine())
+            line = None
+            for enc in (locale.getpreferredencoding(False), "utf-8", "cp950"):
+                try:
+                    line = raw.decode(enc).strip()
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if line is None:
+                line = raw.decode("utf-8", errors="ignore").strip()
+            line = "".join(ch for ch in line if ch.isprintable())
+            if line:
+                self.log_output.append(line)
 
     def clean_finished(self):
         self.log_output.append("🧹 清洗程序已結束")
