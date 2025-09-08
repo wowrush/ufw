@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QFormLayout, QSpinBox, QGridLayout,
     QListWidget, QListWidgetItem, QStackedWidget
 )
-from PyQt5.QtGui import QIcon, QColor, QPixmap, QFont, QPainter
+from PyQt5.QtGui import QIcon, QColor, QPixmap, QFont
 from PyQt5.QtCore import Qt, QTimer, QProcess, QFileSystemWatcher, pyqtSignal, QThread
 
 
@@ -698,8 +698,6 @@ class VisualizerWidget(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
-        # 儲存已疊加的圖表，避免新圖覆蓋舊圖
-        self.combined_pixmap = QPixmap()
 
         # 綁定事件
         self.binary_bar_btn.clicked.connect(lambda: self.display_image("binary_bar.png"))
@@ -726,29 +724,14 @@ class VisualizerWidget(QWidget):
             return
         path = os.path.join(folder, filename)
         if os.path.exists(path):
-            new_pixmap = QPixmap(path)
-            new_pixmap = new_pixmap.scaled(
+            pixmap = QPixmap(path)
+            pixmap = pixmap.scaled(
                 self.image_label.width(),
                 self.image_label.height(),
                 Qt.KeepAspectRatio,
                 Qt.SmoothTransformation,
             )
-
-            # 將白色背景轉為透明，避免遮擋舊資料
-            mask = new_pixmap.createMaskFromColor(Qt.white, Qt.MaskOutColor)
-            new_pixmap.setMask(mask)
-
-            if self.combined_pixmap.isNull():
-                self.combined_pixmap = QPixmap(self.image_label.size())
-                self.combined_pixmap.fill(Qt.transparent)
-
-            painter = QPainter(self.combined_pixmap)
-            x = (self.combined_pixmap.width() - new_pixmap.width()) // 2
-            y = (self.combined_pixmap.height() - new_pixmap.height()) // 2
-            painter.drawPixmap(x, y, new_pixmap)
-            painter.end()
-
-            self.image_label.setPixmap(self.combined_pixmap)
+            self.image_label.setPixmap(pixmap)
             self.image_label.setText("")  # 清除預設文字
         else:
             self.image_label.setPixmap(QPixmap())
