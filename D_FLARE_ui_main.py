@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QFormLayout, QSpinBox, QGridLayout,
     QListWidget, QListWidgetItem, QStackedWidget
 )
-from PyQt5.QtGui import QIcon, QColor, QPixmap, QFont
+from PyQt5.QtGui import QIcon, QColor, QPixmap, QFont, QPainter
 from PyQt5.QtCore import Qt, QTimer, QProcess, QFileSystemWatcher, pyqtSignal, QThread
 
 
@@ -723,9 +723,26 @@ class VisualizerWidget(QWidget):
             return
         path = os.path.join(folder, filename)
         if os.path.exists(path):
-            pixmap = QPixmap(path)
-            pixmap = pixmap.scaled(self.image_label.width(), self.image_label.height(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            self.image_label.setPixmap(pixmap)
+            new_pixmap = QPixmap(path)
+            new_pixmap = new_pixmap.scaled(
+                self.image_label.width(),
+                self.image_label.height(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation,
+            )
+
+            base_pixmap = self.image_label.pixmap()
+            if base_pixmap is None or base_pixmap.isNull():
+                base_pixmap = QPixmap(self.image_label.size())
+                base_pixmap.fill(Qt.transparent)
+
+            painter = QPainter(base_pixmap)
+            x = (base_pixmap.width() - new_pixmap.width()) // 2
+            y = (base_pixmap.height() - new_pixmap.height()) // 2
+            painter.drawPixmap(x, y, new_pixmap)
+            painter.end()
+
+            self.image_label.setPixmap(base_pixmap)
             self.image_label.setText("")  # 清除預設文字
         else:
             self.image_label.setPixmap(QPixmap())
