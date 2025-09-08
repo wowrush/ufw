@@ -545,6 +545,44 @@ def get_next_batch_id(all_results_path):
     except Exception:
         return 1
 
+
+def save_all_results_and_redraw(
+    df_bin: pd.DataFrame,
+    batch_id: int,
+    all_results_path: str,
+    binary_pie: str,
+    binary_bar: str,
+    overwrite: bool = False,
+    dedupe: bool = False,
+):
+    """將本批結果寫入 all_results.csv 並用累積資料重繪二元圖表。"""
+    df_save = df_bin.copy()
+    df_save["batch_id"] = batch_id
+
+    if overwrite:
+        df_save.to_csv(all_results_path, index=False, encoding="utf-8")
+    elif dedupe and os.path.exists(all_results_path):
+        prev = pd.read_csv(all_results_path, encoding="utf-8")
+        merged = pd.concat([prev, df_save], ignore_index=True)
+        if "raw_log" in merged.columns:
+            merged = merged.drop_duplicates(subset=["raw_log"], keep="last")
+        else:
+            dedupe_keys = [
+                "Datetime","SyslogID","SourceIP","SourcePort",
+                "DestinationIP","DestinationPort","Description",
+            ]
+            dedupe_keys = [k for k in dedupe_keys if k in merged.columns]
+            merged = merged.drop_duplicates(subset=dedupe_keys, keep="last")
+        merged.to_csv(all_results_path, index=False, encoding="utf-8")
+    else:
+        write_header = not os.path.exists(all_results_path)
+        with open(all_results_path, "a", newline='', encoding="utf-8") as allf:
+            df_save.to_csv(allf, header=write_header, index=False)
+
+    df_all = pd.read_csv(all_results_path, encoding="utf-8")
+    _redraw_binary_charts_from_df(df_all, binary_pie, binary_bar)
+    return df_all
+
 # =============== STEP1 ===============
 def step1_process_logs(raw_log_path, step1_out_path, unique_out_json, batch_id, show_progress=True):
     import gzip, io
@@ -919,35 +957,28 @@ def dflare_sys_full_pipeline(
     df_bin = force_mark_acl_deny_anywhere(df_bin)  # 最後保險
     df_bin["is_attack"] = pd.to_numeric(df_bin["is_attack"], errors="coerce").fillna(0).astype(int)
 
-    # 寫回 & 重畫 & 告警彙整
+    # 寫回 & 告警彙整（圖表稍後根據累積資料重新繪製）
     df_bin.to_csv(binary_csv, index=False, encoding="utf-8")
-    _redraw_binary_charts_from_df(df_bin, binary_pie, binary_bar)
     build_alerts(df_bin, alerts_json)
 
-    # [5] 多元模型（僅攻擊流量）
-    print("=== PIPELINE DEBUG (is_attack 分佈) ===")
-    print(df_bin["is_attack"].value_counts())
+
     df_attack = df_bin[df_bin['is_attack'] == 1].copy()
     if df_attack.empty:
         print(f"{Fore.YELLOW}{Style.BRIGHT}本批資料無攻擊流量（is_attack=1），跳過多元分級。")
-        # [6] all_results 寫入
-        df_bin["batch_id"] = batch_id
-        if overwrite_all_results:
-            df_bin.to_csv(all_results_path, index=False, encoding="utf-8")
-        elif dedupe_all_results and os.path.exists(all_results_path):
-            prev = pd.read_csv(all_results_path, encoding="utf-8")
-            merged = pd.concat([prev, df_bin], ignore_index=True)
-            if "raw_log" in merged.columns:
-                merged = merged.drop_duplicates(subset=["raw_log"], keep="last")
-            else:
-                dedupe_keys = ["Datetime","SyslogID","SourceIP","SourcePort","DestinationIP","DestinationPort","Description"]
-                dedupe_keys = [k for k in dedupe_keys if k in merged.columns]
-                merged = merged.drop_duplicates(subset=dedupe_keys, keep="last")
-            merged.to_csv(all_results_path, index=False, encoding="utf-8")
-        else:
-            write_header = not os.path.exists(all_results_path)
-            with open(all_results_path, "a", newline='', encoding="utf-8") as allf:
-                df_bin.to_csv(allf, header=write_header, index=False)
+        df_all = save_all_results_and_redraw(
+            df_bin,
+            batch_id,
+            all_results_path,
+            binary_pie,
+            binary_bar,
+            overwrite_all_results,
+            dedupe_all_results,
+        )
+        dist_all = df_all['is_attack'].value_counts().sort_index().reindex([0, 1], fill_value=0)
+        bin_res["is_attack_distribution"] = dist_all.to_dict()
+        bin_res["count_all"] = int(df_all.shape[0])
+        bin_res["count_attack"] = int(dist_all.get(1, 0))
+        bin_res["count_normal"] = int(dist_all.get(0, 0))
         return {
             "batch_id": batch_id,
             "binary": bin_res,
@@ -960,7 +991,7 @@ def dflare_sys_full_pipeline(
             "multiclass_output_pie": None,
             "multiclass_output_bar": None,
             "all_results_csv": all_results_path,
-            "message": "本批無攻擊流量，已跳過多元分級"
+            "message": "本批無攻擊流量，已跳過多元分級",
         }
 
     # 有攻擊流量才進行多元分級
@@ -974,24 +1005,21 @@ def dflare_sys_full_pipeline(
         show_progress=show_progress
     )
 
-    # [6] all_results 寫入
-    df_bin["batch_id"] = batch_id
-    if overwrite_all_results:
-        df_bin.to_csv(all_results_path, index=False, encoding="utf-8")
-    elif dedupe_all_results and os.path.exists(all_results_path):
-        prev = pd.read_csv(all_results_path, encoding="utf-8")
-        merged = pd.concat([prev, df_bin], ignore_index=True)
-        if "raw_log" in merged.columns:
-            merged = merged.drop_duplicates(subset=["raw_log"], keep="last")
-        else:
-            dedupe_keys = ["Datetime","SyslogID","SourceIP","SourcePort","DestinationIP","DestinationPort","Description"]
-            dedupe_keys = [k for k in dedupe_keys if k in merged.columns]
-            merged = merged.drop_duplicates(subset=dedupe_keys, keep="last")
-        merged.to_csv(all_results_path, index=False, encoding="utf-8")
-    else:
-        write_header = not os.path.exists(all_results_path)
-        with open(all_results_path, "a", newline='', encoding="utf-8") as allf:
-            df_bin.to_csv(allf, header=write_header, index=False)
+
+    df_all = save_all_results_and_redraw(
+        df_bin,
+        batch_id,
+        all_results_path,
+        binary_pie,
+        binary_bar,
+        overwrite_all_results,
+        dedupe_all_results,
+    )
+    dist_all = df_all['is_attack'].value_counts().sort_index().reindex([0, 1], fill_value=0)
+    bin_res["is_attack_distribution"] = dist_all.to_dict()
+    bin_res["count_all"] = int(df_all.shape[0])
+    bin_res["count_attack"] = int(dist_all.get(1, 0))
+    bin_res["count_normal"] = int(dist_all.get(0, 0))
 
     # [7] 回傳
     return {
@@ -1024,7 +1052,7 @@ if __name__ == "__main__":
     parser.add_argument('--multi_model', type=str, help='多元模型 .pkl 路徑')
     parser.add_argument('--output_dir', type=str, help='所有輸出檔存放資料夾')
     parser.add_argument('--no_progress', action="store_true", help='不顯示進度條')
-    parser.add_argument('--force_all_attack', action="store_true', help='本批資料全部視為攻擊（跳過二元誤判）")
+    parser.add_argument('--force_all_attack', action="store_true", help='本批資料全部視為攻擊（跳過二元誤判）')
     parser.add_argument('--overwrite_all_results', action="store_true",
                         help='不累積歷史，all_results.csv 直接覆蓋為本批結果')
     parser.add_argument('--dedupe_all_results', action="store_true",
