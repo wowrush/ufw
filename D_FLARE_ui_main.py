@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QFormLayout, QSpinBox, QGridLayout,
     QListWidget, QListWidgetItem, QStackedWidget
 )
-from PyQt5.QtGui import QIcon, QColor, QPixmap, QFont, QPainter
+from PyQt5.QtGui import QIcon, QColor, QPixmap, QFont
 from PyQt5.QtCore import Qt, QTimer, QProcess, QFileSystemWatcher, pyqtSignal, QThread
 
 
@@ -698,7 +698,6 @@ class VisualizerWidget(QWidget):
         layout.addStretch()
         self.setLayout(layout)
 
-
         # 綁定事件
         self.binary_bar_btn.clicked.connect(lambda: self.display_image("binary_bar.png"))
         self.binary_pie_btn.clicked.connect(lambda: self.display_image("binary_pie.png"))
@@ -724,15 +723,8 @@ class VisualizerWidget(QWidget):
             return
         path = os.path.join(folder, filename)
         if os.path.exists(path):
-codex/allow-data-overlay-on-new-chart-1i37t9
             pixmap = QPixmap(path)
-            pixmap = pixmap.scaled(
-                self.image_label.width(),
-                self.image_label.height(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
- codex/allow-data-overlay-on-new-chart-1i37t9
+            pixmap = pixmap.scaled(self.image_label.width(), self.image_label.height(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
             self.image_label.setPixmap(pixmap)
             self.image_label.setText("")  # 清除預設文字
         else:
