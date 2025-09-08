@@ -919,9 +919,8 @@ def dflare_sys_full_pipeline(
     df_bin = force_mark_acl_deny_anywhere(df_bin)  # 最後保險
     df_bin["is_attack"] = pd.to_numeric(df_bin["is_attack"], errors="coerce").fillna(0).astype(int)
 
-    # 寫回 & 重畫 & 告警彙整
+    # 寫回 & 告警彙整（圖表稍後根據累積資料重新繪製）
     df_bin.to_csv(binary_csv, index=False, encoding="utf-8")
-    _redraw_binary_charts_from_df(df_bin, binary_pie, binary_bar)
     build_alerts(df_bin, alerts_json)
 
     # [5] 多元模型（僅攻擊流量）
@@ -948,6 +947,14 @@ def dflare_sys_full_pipeline(
             write_header = not os.path.exists(all_results_path)
             with open(all_results_path, "a", newline='', encoding="utf-8") as allf:
                 df_bin.to_csv(allf, header=write_header, index=False)
+        # 重新讀取累積資料並更新圖表
+        df_all = pd.read_csv(all_results_path, encoding="utf-8")
+        _redraw_binary_charts_from_df(df_all, binary_pie, binary_bar)
+        dist_all = df_all['is_attack'].value_counts().sort_index().reindex([0,1], fill_value=0)
+        bin_res["is_attack_distribution"] = dist_all.to_dict()
+        bin_res["count_all"] = int(df_all.shape[0])
+        bin_res["count_attack"] = int(dist_all.get(1, 0))
+        bin_res["count_normal"] = int(dist_all.get(0, 0))
         return {
             "batch_id": batch_id,
             "binary": bin_res,
@@ -992,6 +999,15 @@ def dflare_sys_full_pipeline(
         write_header = not os.path.exists(all_results_path)
         with open(all_results_path, "a", newline='', encoding="utf-8") as allf:
             df_bin.to_csv(allf, header=write_header, index=False)
+
+    # 重新讀取累積資料並更新圖表
+    df_all = pd.read_csv(all_results_path, encoding="utf-8")
+    _redraw_binary_charts_from_df(df_all, binary_pie, binary_bar)
+    dist_all = df_all['is_attack'].value_counts().sort_index().reindex([0,1], fill_value=0)
+    bin_res["is_attack_distribution"] = dist_all.to_dict()
+    bin_res["count_all"] = int(df_all.shape[0])
+    bin_res["count_attack"] = int(dist_all.get(1, 0))
+    bin_res["count_normal"] = int(dist_all.get(0, 0))
 
     # [7] 回傳
     return {
