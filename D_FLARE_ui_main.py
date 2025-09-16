@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
     QListWidget, QListWidgetItem, QStackedWidget
 )
 from PyQt5.QtGui import QIcon, QColor, QPixmap, QFont
-from PyQt5.QtCore import Qt, QTimer, QProcess, QFileSystemWatcher, pyqtSignal, QThread
+from PyQt5.QtCore import Qt, QTimer, QProcess, QFileSystemWatcher, pyqtSignal
 
 
 SETTINGS_FILE = "notifier_settings.txt"
@@ -36,39 +36,6 @@ def send_discord_alert(webhook_url, content):
     except Exception as e:
         print(f"發送 Discord 通知失敗: {e}")
         return False
-
-
-class AutoCleanWorker(QThread):
-    """Run heavy cleaning/model tasks in background to keep UI responsive."""
-
-    finished = pyqtSignal(dict)
-    error = pyqtSignal(str)
-
-    def __init__(self, binary_model_path, model_path, latest_file, output_dir):
-        super().__init__()
-        self.binary_model_path = binary_model_path
-        self.model_path = model_path
-        self.latest_file = latest_file
-        self.output_dir = output_dir
-
-    def run(self):
-        import importlib.util
-        import sys
-        try:
-            spec = importlib.util.spec_from_file_location("D_FLAREsys", "./D_FLAREsys.py")
-            module = importlib.util.module_from_spec(spec)
-            sys.modules["D_FLAREsys"] = module
-            spec.loader.exec_module(module)
-            result = module.dflare_sys_full_pipeline(
-                raw_log_path=self.latest_file,
-                binary_model_path=self.binary_model_path,
-                multiclass_model_path=self.model_path,
-                output_dir=self.output_dir,
-                show_progress=False,
-            )
-            self.finished.emit(result)
-        except Exception as e:
-            self.error.emit(str(e))
 
 class LogFetcherWidget(QWidget):
     """
@@ -396,6 +363,7 @@ class LogFetcherWidget(QWidget):
 
     # ================= 自動清洗分析流程 =================
     def run_auto_cleaning(self):
+        import importlib.util
         import traceback
 
         # 1. 收集必要路徑
@@ -411,6 +379,7 @@ class LogFetcherWidget(QWidget):
         self.log_output.append(f"清洗輸出路徑：{output_dir}")
         self.log_output.append("================================")
 
+        # 2. 必要欄位防呆檢查
         missing = []
         if not binary_model_path:
             missing.append("二元模型檔案")
@@ -424,26 +393,42 @@ class LogFetcherWidget(QWidget):
             self.log_output.append(f"❗ 缺少：{'、'.join(missing)}，無法自動分析！")
             return
 
-        # 3. 使用背景執行緒處理耗時流程，避免凍結 UI
-        self._current_clean_file = latest_file
-        self.clean_thread = AutoCleanWorker(binary_model_path, model_path, latest_file, output_dir)
-        self.clean_thread.finished.connect(self.on_clean_finished)
-        self.clean_thread.error.connect(lambda msg: self.log_output.append(f"❌ 自動分析失敗：{msg}"))
-        self.clean_thread.start()
-
-    def on_clean_finished(self, result):
+        # 3. 執行主要流程
         try:
+            # 3-1. 動態 import 處理主流程
+            spec = importlib.util.spec_from_file_location("D_FLAREsys", "./D_FLAREsys.py")
+            D_FLAREsys = importlib.util.module_from_spec(spec)
+            sys.modules["D_FLAREsys"] = D_FLAREsys
+            spec.loader.exec_module(D_FLAREsys)
+
+            # 3-2. 執行資料清洗與推論
+            result = D_FLAREsys.dflare_sys_full_pipeline(
+                raw_log_path=latest_file,
+                binary_model_path=binary_model_path,
+                multiclass_model_path=model_path,
+                output_dir=output_dir,
+                show_progress=False
+            )
+
+           # 3-3. UI 成功回饋
             self.log_output.append(f"✅ 自動分析完成！結果：{result['binary']['output_csv']}")
             self.log_output.append(f"📊 圓餅圖（is_attack）：{result['binary'].get('output_pie', '-')}")
             self.log_output.append(f"📊 長條圖（is_attack）：{result['binary'].get('output_bar', '-')}")
+
+            # 4. 推播觸發
             multiclass = result.get('multiclass')
             output_csv = multiclass.get('output_csv') if multiclass else None
+
+            # --- 多元結果防重複通知 ---
             if multiclass and output_csv and os.path.exists(output_csv):
                 if output_csv in self.notified_multiclass_files:
                     self.log_output.append(f"（{output_csv} 已推播過，略過重複通知）")
+                    # 即刻 return，這批跳過不再往下執行推播
                     return
+
                 self.log_output.append(f"📊 圓餅圖（Severity）：{multiclass.get('output_pie', '-')}")
                 self.log_output.append(f"📊 長條圖（Severity）：{multiclass.get('output_bar', '-')}")
+                # 核心：只針對 output_csv 有高風險（Severity 1/2/3）才推播
                 try:
                     df = pd.read_csv(output_csv)
                     if "Severity" in df.columns:
@@ -453,6 +438,7 @@ class LogFetcherWidget(QWidget):
                             try:
                                 self.notifier_widget.trigger_notification(output_csv)
                                 self.log_output.append("✅ 通知推播呼叫完成")
+                                # 推播成功才紀錄
                                 self.notified_multiclass_files.add(output_csv)
                             except Exception as e:
                                 self.log_output.append(f"❌ 通知推播失敗：{e}")
@@ -464,27 +450,20 @@ class LogFetcherWidget(QWidget):
                     self.log_output.append(f"❌ 多元結果檢查失敗：{e}")
             else:
                 self.log_output.append("（本批次無攻擊流量，未產生多元分級圖表，未自動推播）")
-            self.processed_files = {pf for pf in self.processed_files if pf[0] != self._current_clean_file}
+
+
+            # 5. 更新已處理檔案紀錄
+            self.processed_files = {pf for pf in self.processed_files if pf[0] != latest_file}
+
         except Exception as e:
             self.log_output.append(f"❌ 自動分析失敗：{e}")
             self.log_output.append(traceback.format_exc())
 
     def handle_log_output(self):
-
         if not self.socket_proc:
             return
         while self.socket_proc.canReadLine():
-            raw = bytes(self.socket_proc.readLine())
-            line = None
-            for enc in (locale.getpreferredencoding(False), "utf-8", "cp950"):
-                try:
-                    line = raw.decode(enc).strip()
-                    break
-                except UnicodeDecodeError:
-                    continue
-            if line is None:
-                line = raw.decode("utf-8", errors="ignore").strip()
-            line = "".join(ch for ch in line if ch.isprintable())
+            line = self.socket_proc.readLine().data().decode("utf-8").strip()
             if line:
                 self.log_output.append(line)
 
@@ -664,7 +643,7 @@ class VisualizerWidget(QWidget):
         self.select_folder_btn = QPushButton("選擇資料夾")
         self.select_folder_btn.clicked.connect(self.choose_folder)
 
-        # ⬇️ 新增「同步清洗資料夾路徑」按鈕
+        # ⬇️ 新增「同步路徑」按鈕
         self.sync_btn = QPushButton("同步清洗資料夾路徑")
         self.sync_btn.clicked.connect(self.sync_folder_path)
 
@@ -1275,3 +1254,5 @@ if __name__ == "__main__":
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())
+
+
